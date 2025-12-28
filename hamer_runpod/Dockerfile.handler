@@ -4,7 +4,10 @@
 
 FROM naman188/hamer-runpod:base
 
+# CRITICAL: Set WORKDIR to /app/hamer so HaMeR can find models in relative path _DATA/
+WORKDIR /app/hamer
+
 # Copy handler (this is the only thing that changes)
-COPY handler.py /app/handler.py
+COPY handler.py /app/hamer/handler.py
 
 CMD ["python", "-u", "handler.py"]

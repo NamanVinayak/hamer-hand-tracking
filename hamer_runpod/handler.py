@@ -47,8 +47,10 @@ def load_models():
     import hamer
     from vitpose_model import ViTPoseModel
     
-    # Download models if needed
-    download_models(CACHE_DIR_HAMER)
+    # SKIP download_models() - models are BAKED INTO the Docker image at /app/hamer/_DATA
+    # Calling download_models() would re-download 5.7GB at runtime to ~/.cache/hamer/
+    # which fails with UID permission errors on RunPod
+    # download_models(CACHE_DIR_HAMER)  # DISABLED - models already in image
     
     # Load HaMeR
     print("Loading HaMeR model...")
