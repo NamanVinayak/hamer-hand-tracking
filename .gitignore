@@ -1,0 +1,70 @@
+# Sensitive credentials and keys
+.env
+*.env
+.env.*
+hamer_runpod/.env
+**/secrets.*
+**/*secret*
+**/*credential*
+*_key.json
+*_keys.json
+
+# Python virtual environments
+.venv/
+venv/
+hamer_venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# HaMeR model files (too large for git)
+hamer/_DATA/
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Large model files
+*.task
+hand_landmarker.task
+
+# Video files
+videos/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Output files
+output/
+demo_out/
+*.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs.txt
+*.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+hamer/

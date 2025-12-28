@@ -1,0 +1,51 @@
+# HaMeR Base Image - Fixed for RunPod User Namespace
+# Uses --no-same-owner to prevent UID 1000222 from polluting layers
+
+FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install OS dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    espeak-ng libsndfile1-dev \
+    ffmpeg \
+    libsm6 libxext6 \
+    libglfw3-dev libgles2-mesa-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install gdown
+RUN pip install --no-build-isolation chumpy && \
+    pip install scipy opencv-python scikit-image
+
+# (numpy fix moved to after HaMeR installation)
+
+# Clone HaMeR
+WORKDIR /app
+RUN git clone --recursive https://github.com/geopavlakos/hamer.git
+
+# Install ViTPose
+WORKDIR /app/hamer
+RUN pip install --no-build-isolation -v -e third-party/ViTPose
+
+# Install HaMeR
+RUN pip install --no-build-isolation -e .[all]
+
+# Download and extract models WITH --no-same-owner
+# This is the FIX: the original fetch_demo_data.sh doesn't have --no-same-owner
+# which causes UID 1000222 from the UT Austin researcher to pollute the layer
+RUN gdown https://drive.google.com/uc?id=1mv7CUAnm73oKsEEG1xE3xH2C_oqcFSzT -O hamer_demo_data.tar.gz && \
+    tar --warning=no-unknown-keyword --exclude=".*" --no-same-owner -xvf hamer_demo_data.tar.gz && \
+    rm hamer_demo_data.tar.gz
+
+# Fix numpy version AFTER all installations
+# HaMeR/ViTPose may install numpy 2.x, we need to downgrade and rebuild xtcocotools
+RUN pip install "numpy<2.0" --force-reinstall && \
+    pip install --no-cache-dir --force-reinstall xtcocotools
+
+# Install RunPod SDK
+RUN pip install runpod boto3
+
+WORKDIR /app
