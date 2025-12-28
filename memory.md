@@ -48,9 +48,13 @@ Build a production-ready hand tracking system for egocentric (first-person) vide
 ### Phase 6: Runtime Errors & Fixes
 - **Error 1**: Job failed with `numpy.dtype size changed, binary incompatibility`
 - **Cause**: `xtcocotools` (ViTPose dependency) compiled against numpy 1.x, but container has numpy 2.x
-- **Fix**: Added `pip install "numpy<2.0"` to Dockerfile.base
-- **Gotcha**: RunPod workers cache images! After pushing new image, must **restart workers** to pull fresh
-- **Current Image**: `naman188/hamer-runpod:latest_2`
+- **Failed Fix 1**: `pip install numpy<2.0 --force-reinstall` at end - didn't work because runpod/boto3 install reinstalled numpy 2.x
+- **Successful Fix**: `PIP_CONSTRAINT` environment variable
+  - Creates `/tmp/numpy-constraint.txt` with `numpy==1.26.4`
+  - Sets `ENV PIP_CONSTRAINT=/tmp/numpy-constraint.txt`
+  - Prevents ANY pip command from installing numpy>=2.0
+  - Added build-time verification: `assert numpy.__version__.startswith('1.')`
+- **Current Working Image**: `naman188/hamer-runpod:latest_4`
 
 ---
 

@@ -79,12 +79,21 @@ python hamer_visualizer.py video_hamer.json --video /path/to/video.mp4
 
 ### NumPy Version Constraint
 
-HaMeR requires `numpy<2.0` because `xtcocotools` (ViTPose dependency) is compiled against numpy 1.x. Must downgrade after all installations:
+HaMeR requires `numpy==1.26.4` because `xtcocotools` (ViTPose dependency) is compiled against numpy 1.x. Uses PIP_CONSTRAINT to globally lock numpy version:
 
 ```dockerfile
-RUN pip install "numpy<2.0" --force-reinstall && \
-    pip install --no-cache-dir --force-reinstall xtcocotools
+# Set constraint file EARLY to prevent ANY pip command from installing numpy>=2.0
+ENV PIP_CONSTRAINT=/tmp/numpy-constraint.txt
+RUN echo "numpy==1.26.4" > /tmp/numpy-constraint.txt
+
+# Install numpy 1.26.4 FIRST
+RUN pip install --no-cache-dir "numpy==1.26.4"
+
+# Later: Rebuild xtcocotools against numpy 1.x
+RUN pip install --no-cache-dir --force-reinstall xtcocotools
 ```
+
+**Critical**: The constraint file prevents `pip install runpod boto3` (or any other package) from reinstalling numpy 2.x as a transitive dependency.
 
 ### RunPod Image Caching Gotcha
 
