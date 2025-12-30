@@ -44,36 +44,49 @@ def load_results(json_path: str) -> dict:
         return json.load(f)
 
 
-def transform_joints_for_3d(hand: dict, img_width: int, img_height: int) -> np.ndarray:
+def transform_joints_for_3d(hand: dict, img_width: int, img_height: int, side: str) -> np.ndarray:
     """
     Transform HaMeR 3D joints to Rerun coordinate space.
-    Uses bbox position for hand placement (NOT camera_t which has wrong scale).
+    Uses ViTPose 2D keypoints for XY positioning (same source as perfect 2D overlay).
+
+    Args:
+        hand: Hand data dict with joints_3d, vitpose_2d, bbox
+        img_width: Image width in pixels
+        img_height: Image height in pixels
+        side: "left" or "right" - anatomical hand side from HaMeR detection
     """
-    joints = np.array(hand["joints_3d"])
-    bbox = hand["bbox"]
-    side = hand["side"]
+    joints_3d = np.array(hand["joints_3d"])
 
-    # Get bbox center position in frame
-    bbox_center_x = (bbox[0] + bbox[2]) / 2
-    bbox_center_y = (bbox[1] + bbox[3]) / 2
+    # Get ViTPose 2D keypoints (same data that makes 2D overlay perfect!)
+    if "vitpose_2d" in hand:
+        vitpose_2d = np.array(hand["vitpose_2d"])  # (21, 2) in pixel coords
+    else:
+        # Fallback to bbox if vitpose_2d not available
+        bbox = hand["bbox"]
+        bbox_center_x = (bbox[0] + bbox[2]) / 2
+        bbox_center_y = (bbox[1] + bbox[3]) / 2
+        vitpose_2d = np.array([[bbox_center_x, bbox_center_y]] * 21)
 
-    # Normalize to image center (-1 to +1 range)
-    norm_x = (bbox_center_x - img_width/2) / (img_width/2)
-    norm_y = (bbox_center_y - img_height/2) / (img_height/2)
+    # Calculate wrist position (joint 0) in normalized coordinates
+    wrist_2d = vitpose_2d[0]  # WRIST is index 0
+    norm_x = (wrist_2d[0] - img_width/2) / (img_width/2)
+    norm_y = (wrist_2d[1] - img_height/2) / (img_width/2)
 
-    # Scale hands for 3D visibility (keep hand shape proportional)
+    # Keep hand shape from joints_3d (preserve HaMeR's accurate hand geometry)
     scale = 2.0
-    result = joints * scale
+    result = joints_3d * scale
 
-    # Mirror X axis for right hand (HaMeR convention)
+    # UNIVERSAL SOLUTION: Flip only RIGHT hands (HaMeR canonical space convention)
+    # HaMeR outputs left hands correctly, but right hands need X-axis flip
     if side == "right":
         result[:, 0] = -result[:, 0]
 
-    # Position hands based on bbox location in frame
-    # Small offsets (0.3) keep hands close when bboxes are close
-    result[:, 0] += norm_x * 0.3
-    result[:, 1] += -norm_y * 0.3  # Flip Y (image coords go down, 3D goes up)
-    result[:, 2] = -result[:, 2]   # Flip Z for Rerun coordinate system
+    # Position with FULL scale (1.0) to track video positions exactly
+    # This ensures hands move together/apart in 3D matching video movement
+    # FIXED: Negate X to convert from image coords to Rerun 3D coords
+    result[:, 0] -= norm_x * 1.0  # Right in video → appears right in 3D
+    result[:, 1] += -norm_y * 1.0  # Flip Y for Rerun coords
+    result[:, 2] = -result[:, 2]    # Flip Z for Rerun coords
 
     return result
 
@@ -257,9 +270,9 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
             side = hand["side"]
             joints_3d = np.array(hand["joints_3d"])
             bbox = hand["bbox"]
-            
+
             # 3D visualization
-            pos_3d = transform_joints_for_3d(hand, img_w, img_h)
+            pos_3d = transform_joints_for_3d(hand, img_w, img_h, side)
             log_hand_3d(side, pos_3d, side)
             
             # 2D overlay
