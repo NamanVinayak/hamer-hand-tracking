@@ -172,7 +172,7 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
             side = "right" if batch['right'][n].item() else "left"
             
             # Get 3D joints (21 joints per hand)
-            pred_keypoints_3d = out['pred_keypoints_3d'][n].detach().cpu().numpy()  # [21, 3]
+            pred_keypoints_3d = out['pred_keypoints_3d'][n]  # [21, 3] - keep as tensor for projection
             
             # Get camera translation for world coordinates
             multiplier = (2 * batch['right'][n] - 1)
@@ -183,17 +183,39 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
             box_size = batch["box_size"][n].float()
             img_size = batch["img_size"][n].float()
             scaled_focal_length = MODEL_CFG.EXTRA.FOCAL_LENGTH / MODEL_CFG.MODEL.IMAGE_SIZE * img_size.max()
-            pred_cam_t = cam_crop_to_full(
+            
+            # Compute camera translation in full image space
+            pred_cam_t_full = cam_crop_to_full(
                 pred_cam.unsqueeze(0), 
                 box_center.unsqueeze(0), 
                 box_size.unsqueeze(0), 
                 img_size.unsqueeze(0), 
                 scaled_focal_length
-            ).detach().cpu().numpy()[0]
+            )
+            
+            # === Project 3D joints to 2D image coordinates ===
+            # Build camera intrinsics
+            focal_length = torch.tensor([[scaled_focal_length, scaled_focal_length]], device=DEVICE)
+            camera_center = img_size.flip(0).unsqueeze(0) / 2  # [cx, cy]
+            
+            # Project: joints_3d + camera_t -> 2D
+            joints_world = pred_keypoints_3d.unsqueeze(0) + pred_cam_t_full.unsqueeze(1)
+            
+            # Perspective projection: project to image plane
+            # z = depth, project x,y using focal length
+            z = joints_world[:, :, 2:3]  # [1, 21, 1]
+            xy = joints_world[:, :, :2]   # [1, 21, 2]
+            
+            # Apply projection: x_2d = fx * x / z + cx
+            joints_2d = xy / z * focal_length.unsqueeze(1) + camera_center.unsqueeze(1)
+            joints_2d = joints_2d[0].detach().cpu().numpy()  # [21, 2]
+            
+            pred_cam_t = pred_cam_t_full.detach().cpu().numpy()[0]
             
             result["hands"].append({
                 "side": side,
-                "joints_3d": pred_keypoints_3d.tolist(),  # 21 joints × 3 coords
+                "joints_3d": pred_keypoints_3d.detach().cpu().numpy().tolist(),  # 21 joints × 3 coords
+                "joints_2d": joints_2d.tolist(),  # 21 joints × 2 coords (pixel positions!)
                 "camera_t": pred_cam_t.tolist(),
                 "bbox": boxes[n].tolist()
             })

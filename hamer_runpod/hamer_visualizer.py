@@ -44,35 +44,34 @@ def load_results(json_path: str) -> dict:
         return json.load(f)
 
 
-def transform_joints_for_3d(joints_3d: np.ndarray, side: str, img_width: int, img_height: int, bbox: list) -> np.ndarray:
+def transform_joints_for_3d(hand: dict, img_width: int, img_height: int) -> np.ndarray:
     """
-    Transform HaMeR 3D joints to Rerun coordinate space (like MediaPipe).
-    Position based on bbox center, normalized to [-1, 1] range.
+    Transform HaMeR 3D joints to Rerun coordinate space.
+    Use joints_3d for shape, camera_t X/Y for relative positioning.
     """
-    joints = np.array(joints_3d)
+    joints = np.array(hand["joints_3d"])
+    camera_t = np.array(hand["camera_t"])
+    side = hand["side"]
     
-    # Get bbox center in normalized coordinates
-    x1, y1, x2, y2 = bbox
-    cx = (x1 + x2) / 2 / img_width   # [0, 1]
-    cy = (y1 + y2) / 2 / img_height  # [0, 1]
+    # Scale joints uniformly to preserve hand shape
+    shape_scale = 2.0
     
-    # Center on wrist and scale
-    joints = joints - joints[0]  # Center on wrist
-    scale = 0.3  # Scale to reasonable 3D size
+    # Mirror X for right hand
+    x_mult = -1.0 if side == "right" else 1.0
     
-    # Transform to Rerun coordinates (similar to MediaPipe visualizer)
-    positions = np.zeros_like(joints)
-    positions[:, 0] = (cx - 0.5) * 2 + joints[:, 0] * scale  # X: left-right
-    positions[:, 1] = -(cy - 0.5) * 2 - joints[:, 1] * scale  # Y: up-down (flip)
-    positions[:, 2] = -joints[:, 2] * scale  # Z: depth
+    # Use camera_t X/Y to position hands relative to each other
+    # (ignore Z which is too large and would cause separation)
+    pos_scale = 3.0  # Scale up small X/Y differences
+    offset_x = camera_t[0] * pos_scale * x_mult
+    offset_y = -camera_t[1] * pos_scale
     
-    # Separate left/right hands horizontally
-    if side == "left":
-        positions[:, 0] -= 0.3
-    else:
-        positions[:, 0] += 0.3
+    # Transform joints
+    result = np.zeros_like(joints)
+    result[:, 0] = joints[:, 0] * shape_scale * x_mult + offset_x
+    result[:, 1] = -joints[:, 1] * shape_scale + offset_y
+    result[:, 2] = -joints[:, 2] * shape_scale
     
-    return positions
+    return result
 
 
 def log_hand_3d(hand_key: str, positions: np.ndarray, side: str):
@@ -95,24 +94,39 @@ def log_hand_3d(hand_key: str, positions: np.ndarray, side: str):
     )
 
 
-def project_to_2d(joints_3d: np.ndarray, bbox: list) -> np.ndarray:
-    """Project 3D joints to 2D for video overlay."""
+def get_joints_2d(hand: dict) -> np.ndarray:
+    """
+    Get 2D joint coordinates - use joints_2d if available (from handler),
+    otherwise fall back to bbox-based projection.
+    """
+    # Check if we have direct 2D coordinates from the handler
+    if "joints_2d" in hand:
+        return np.array(hand["joints_2d"])  # Already pixel coordinates!
+    
+    # Fallback: project 3D into bbox (less accurate)
+    joints_3d = np.array(hand["joints_3d"])
+    bbox = hand["bbox"]
+    side = hand["side"]
+    
     x1, y1, x2, y2 = bbox
-    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-    size = min(x2 - x1, y2 - y1)
+    bbox_w = x2 - x1
+    bbox_h = y2 - y1
     
-    joints = np.array(joints_3d)
-    xy = joints[:, :2] - joints[0, :2]  # Center on wrist
-    xy[:, 1] = -xy[:, 1]  # Flip Y
+    xy = joints_3d[:, :2].copy()
+    if side == "left":
+        xy[:, 0] = -xy[:, 0]
     
-    xy_max = np.abs(xy).max()
-    if xy_max > 0:
-        xy = xy / xy_max
+    xy_min = xy.min(axis=0)
+    xy_max = xy.max(axis=0)
+    xy_range = xy_max - xy_min
+    xy_range[xy_range == 0] = 1
+    xy_norm = (xy - xy_min) / xy_range
     
-    scale = size * 1.2
-    pts = np.zeros((len(joints), 2))
-    pts[:, 0] = cx + xy[:, 0] * scale
-    pts[:, 1] = cy + xy[:, 1] * scale
+    pad = 0.05
+    pts = np.zeros((len(joints_3d), 2))
+    pts[:, 0] = x1 + bbox_w * (pad + xy_norm[:, 0] * (1 - 2*pad))
+    pts[:, 1] = y1 + bbox_h * (pad + (1 - xy_norm[:, 1]) * (1 - 2*pad))
+    
     return pts
 
 
@@ -185,12 +199,12 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
             bbox = hand["bbox"]
             
             # 3D visualization
-            pos_3d = transform_joints_for_3d(joints_3d, side, img_w, img_h, bbox)
+            pos_3d = transform_joints_for_3d(hand, img_w, img_h)
             log_hand_3d(side, pos_3d, side)
             
             # 2D overlay
             if frame_rgb is not None:
-                pts_2d = project_to_2d(joints_3d, bbox)
+                pts_2d = get_joints_2d(hand)
                 draw_hand_2d(frame_rgb, pts_2d, side)
         
         if frame_rgb is not None:
@@ -245,7 +259,7 @@ def visualize_comparison(results_a: dict, results_b: dict, video_path: str = Non
                 fa = frame_rgb.copy()
                 if ts in frames_a:
                     for h in frames_a[ts].get("hands", []):
-                        pts = project_to_2d(np.array(h["joints_3d"]), h["bbox"])
+                        pts = get_joints_2d(h)
                         draw_hand_2d(fa, pts, h["side"])
                 rr.log(f"video/{label_a}/frame", rr.Image(fa))
                 
@@ -253,7 +267,7 @@ def visualize_comparison(results_a: dict, results_b: dict, video_path: str = Non
                 fb = frame_rgb.copy()
                 if ts in frames_b:
                     for h in frames_b[ts].get("hands", []):
-                        pts = project_to_2d(np.array(h["joints_3d"]), h["bbox"])
+                        pts = get_joints_2d(h)
                         draw_hand_2d(fb, pts, h["side"])
                 rr.log(f"video/{label_b}/frame", rr.Image(fb))
     

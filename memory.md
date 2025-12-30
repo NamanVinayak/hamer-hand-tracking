@@ -54,7 +54,20 @@ Build a production-ready hand tracking system for egocentric (first-person) vide
   - Sets `ENV PIP_CONSTRAINT=/tmp/numpy-constraint.txt`
   - Prevents ANY pip command from installing numpy>=2.0
   - Added build-time verification: `assert numpy.__version__.startswith('1.')`
-- **Current Working Image**: `naman188/hamer-runpod:latest_4`
+
+### Phase 7: Visualization & 2D Keypoints
+- **Problem**: Initial visualizer showed 3D hands in wrong positions, far apart
+- **Root Cause**: `joints_3d` is in hand-centric coordinates, not image coordinates
+- **Solution**: Added `joints_2d` output to handler.py using perspective projection
+  - Computes actual pixel coordinates for each joint
+  - Uses HaMeR's camera parameters (focal_length, camera_center)
+- **Handler Update**: `naman188/hamer-runpod:latest_8` now outputs:
+  - `joints_3d`: 21x3 hand pose in hand-centric coords
+  - `joints_2d`: 21x2 pixel coordinates for video overlay
+  - `camera_t`: Camera translation for 3D positioning
+  - `bbox`: Detection bounding box
+- **3D Visualization**: Uses `camera_t` X/Y for relative positioning, `joints_3d` for hand shape
+- **2D Overlay**: Uses `joints_2d` directly for accurate pixel positions
 
 ---
 
@@ -66,13 +79,14 @@ Build a production-ready hand tracking system for egocentric (first-person) vide
 | `Dockerfile.base` | Base image with all dependencies and models |
 | `Dockerfile.handler` | Thin layer with just handler.py |
 | `build.sh` | Build script with `base`, `handler`, `push` commands |
-| `handler.py` | RunPod serverless handler with R2 support |
+| `handler.py` | RunPod serverless handler with R2 support + joints_2d |
 
 ### Client Scripts (`hamer_runpod/`)
 | File | Purpose |
 |------|---------|
 | `hamer_client.py` | Upload to R2, trigger RunPod, save JSON |
-| `hamer_visualizer.py` | Display 3D hand skeletons in Rerun |
+| `hamer_visualizer.py` | Display 3D hand skeletons + 2D overlay in Rerun |
+| `hamer_pipeline.py` | End-to-end pipeline for any video |
 
 ### Credentials (`.env` - gitignored)
 - `S3_ENDPOINT_URL` - Cloudflare R2 endpoint
@@ -92,19 +106,20 @@ Build a production-ready hand tracking system for egocentric (first-person) vide
 | Cloudflare R2 over AWS S3 | Free tier, no AWS account issues |
 | RunPod base image | Fixes user namespace UID mapping errors |
 | 2-layer Docker | Fast iteration on handler changes |
+| joints_2d in handler | Proper 2D projection using camera intrinsics |
 
 ---
 
 ## Current Status
 - [x] HaMeR installed locally (for reference)
-- [x] handler.py created with R2 support
+- [x] handler.py created with R2 support + joints_2d
 - [x] Cloudflare R2 bucket: `egocentric-videos`
 - [x] RunPod endpoint created: `foah778z6qr2zd`
-- [x] Base Docker image built: `naman188/hamer-runpod:base`
-- [x] Handler layer built: `naman188/hamer-runpod:latest`
-- [x] Pushed to Docker Hub
-- [ ] Update RunPod to use new image
-- [ ] Test end-to-end pipeline
+- [x] Base Docker image: `naman188/hamer-runpod:base`
+- [x] Production image: `naman188/hamer-runpod:latest_8`
+- [x] End-to-end pipeline tested (04.mp4 @ 5fps, 10fps, 30fps)
+- [x] Rerun visualizer with 3D hands + 2D overlay
+- [ ] Fine-tune 3D hand positioning in visualizer
 
 ---
 
@@ -125,14 +140,38 @@ python hamer_client.py /path/to/video.mp4 --fps 30
 
 # Visualize results
 python hamer_visualizer.py video_hamer.json --video /path/to/video.mp4
+
+# Open saved visualization
+rerun hamer_final_v6.rrd
 ```
 
 ---
 
 ## Docker Images
-- `naman188/hamer-runpod:base` - Base with all dependencies
-- `naman188/hamer-runpod:latest` - Production image for RunPod
+- `naman188/hamer-runpod:base` - Base with all dependencies + models
+- `naman188/hamer-runpod:latest_8` - Production image with joints_2d support
 
 ---
 
-*Last Updated: 2025-12-28*
+## Output JSON Format
+```json
+{
+  "video": "04.mp4",
+  "fps_processed": 10,
+  "frames": [{
+    "frame_idx": 0,
+    "timestamp_ms": 0,
+    "hands": [{
+      "side": "left",
+      "joints_3d": [[x,y,z], ...],  // 21 joints in hand-centric coords
+      "joints_2d": [[x,y], ...],     // 21 joints in pixel coords
+      "camera_t": [x, y, z],
+      "bbox": [x1, y1, x2, y2]
+    }]
+  }]
+}
+```
+
+---
+
+*Last Updated: 2025-12-29*
