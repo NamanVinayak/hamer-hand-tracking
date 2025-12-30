@@ -47,30 +47,34 @@ def load_results(json_path: str) -> dict:
 def transform_joints_for_3d(hand: dict, img_width: int, img_height: int) -> np.ndarray:
     """
     Transform HaMeR 3D joints to Rerun coordinate space.
-    Use joints_3d for shape, camera_t X/Y for relative positioning.
+    Uses bbox position for hand placement (NOT camera_t which has wrong scale).
     """
     joints = np.array(hand["joints_3d"])
-    camera_t = np.array(hand["camera_t"])
+    bbox = hand["bbox"]
     side = hand["side"]
-    
-    # Scale joints uniformly to preserve hand shape
-    shape_scale = 2.0
-    
-    # Mirror X for right hand
-    x_mult = -1.0 if side == "right" else 1.0
-    
-    # Use camera_t X/Y to position hands relative to each other
-    # (ignore Z which is too large and would cause separation)
-    pos_scale = 3.0  # Scale up small X/Y differences
-    offset_x = camera_t[0] * pos_scale * x_mult
-    offset_y = -camera_t[1] * pos_scale
-    
-    # Transform joints
-    result = np.zeros_like(joints)
-    result[:, 0] = joints[:, 0] * shape_scale * x_mult + offset_x
-    result[:, 1] = -joints[:, 1] * shape_scale + offset_y
-    result[:, 2] = -joints[:, 2] * shape_scale
-    
+
+    # Get bbox center position in frame
+    bbox_center_x = (bbox[0] + bbox[2]) / 2
+    bbox_center_y = (bbox[1] + bbox[3]) / 2
+
+    # Normalize to image center (-1 to +1 range)
+    norm_x = (bbox_center_x - img_width/2) / (img_width/2)
+    norm_y = (bbox_center_y - img_height/2) / (img_height/2)
+
+    # Scale hands for 3D visibility (keep hand shape proportional)
+    scale = 2.0
+    result = joints * scale
+
+    # Mirror X axis for right hand (HaMeR convention)
+    if side == "right":
+        result[:, 0] = -result[:, 0]
+
+    # Position hands based on bbox location in frame
+    # Small offsets (0.3) keep hands close when bboxes are close
+    result[:, 0] += norm_x * 0.3
+    result[:, 1] += -norm_y * 0.3  # Flip Y (image coords go down, 3D goes up)
+    result[:, 2] = -result[:, 2]   # Flip Z for Rerun coordinate system
+
     return result
 
 
@@ -94,39 +98,95 @@ def log_hand_3d(hand_key: str, positions: np.ndarray, side: str):
     )
 
 
-def get_joints_2d(hand: dict) -> np.ndarray:
+def project_joints_with_camera(joints_3d: np.ndarray,
+                               camera_t: np.ndarray,
+                               focal_length: float,
+                               img_size: tuple) -> np.ndarray:
     """
-    Get 2D joint coordinates - use joints_2d if available (from handler),
-    otherwise fall back to bbox-based projection.
+    Project 3D joints to 2D using proper perspective projection.
+
+    Args:
+        joints_3d: (21, 3) array of 3D joint positions
+        camera_t: (3,) array of camera translation [tx, ty, tz]
+        focal_length: Focal length in pixels
+        img_size: (width, height) of image
+
+    Returns:
+        (21, 2) array of 2D pixel coordinates
     """
-    # Check if we have direct 2D coordinates from the handler
-    if "joints_2d" in hand:
-        return np.array(hand["joints_2d"])  # Already pixel coordinates!
-    
-    # Fallback: project 3D into bbox (less accurate)
+    # Apply camera translation to get joints in camera space
+    joints_cam = joints_3d + camera_t
+
+    # Perspective projection: x_2d = f * x / z + cx
+    img_w, img_h = img_size
+    cx, cy = img_w / 2, img_h / 2
+
+    x_2d = (focal_length * joints_cam[:, 0] / joints_cam[:, 2]) + cx
+    y_2d = (focal_length * joints_cam[:, 1] / joints_cam[:, 2]) + cy
+
+    return np.stack([x_2d, y_2d], axis=1)
+
+
+def get_joints_2d(hand: dict, img_width: int = 1920, img_height: int = 1080) -> np.ndarray:
+    """
+    Get 2D joint coordinates.
+    Priority: ViTPose keypoints > Camera projection > Bbox projection
+    """
+    # FIRST: Use ViTPose keypoints if available (most accurate, already in pixel coords!)
+    if "vitpose_2d" in hand:
+        return np.array(hand["vitpose_2d"])
+
     joints_3d = np.array(hand["joints_3d"])
+    camera_t = np.array(hand["camera_t"])
     bbox = hand["bbox"]
-    side = hand["side"]
-    
+
+    # SECOND: Check if camera_t depth is valid (not the broken z=39m case)
+    # Valid depth should be < 5 meters for hand tracking
+    if camera_t[2] > 0.1 and camera_t[2] < 5.0:
+        # Use proper perspective projection
+        focal_length = 5000.0  # HaMeR's default focal length
+        try:
+            pts_2d = project_joints_with_camera(
+                joints_3d,
+                camera_t,
+                focal_length,
+                (img_width, img_height)
+            )
+            # Validate results are within reasonable bounds
+            if np.all(pts_2d[:, 0] >= -img_width) and np.all(pts_2d[:, 0] <= 2*img_width) and \
+               np.all(pts_2d[:, 1] >= -img_height) and np.all(pts_2d[:, 1] <= 2*img_height):
+                return pts_2d
+        except:
+            pass  # Fall through to bbox projection
+
+    # Fallback: bbox projection (for when camera_t is invalid)
     x1, y1, x2, y2 = bbox
     bbox_w = x2 - x1
     bbox_h = y2 - y1
-    
+    bbox_center_x = (x1 + x2) / 2
+    bbox_center_y = (y1 + y2) / 2
+
+    # Get XY from 3D joints
     xy = joints_3d[:, :2].copy()
-    if side == "left":
-        xy[:, 0] = -xy[:, 0]
-    
-    xy_min = xy.min(axis=0)
-    xy_max = xy.max(axis=0)
-    xy_range = xy_max - xy_min
+
+    # Scale to fit bbox size
+    xy_range = np.ptp(xy, axis=0)  # range (max - min)
     xy_range[xy_range == 0] = 1
-    xy_norm = (xy - xy_min) / xy_range
-    
-    pad = 0.05
+
+    # Scale factor to fit in bbox (with padding)
+    scale_x = bbox_w * 0.9 / xy_range[0]
+    scale_y = bbox_h * 0.9 / xy_range[1]
+    scale = min(scale_x, scale_y)  # uniform scale to preserve shape
+
+    # Center the hand shape
+    xy_center = xy.mean(axis=0)
+    xy_centered = (xy - xy_center) * scale
+
+    # Project to bbox center
     pts = np.zeros((len(joints_3d), 2))
-    pts[:, 0] = x1 + bbox_w * (pad + xy_norm[:, 0] * (1 - 2*pad))
-    pts[:, 1] = y1 + bbox_h * (pad + (1 - xy_norm[:, 1]) * (1 - 2*pad))
-    
+    pts[:, 0] = bbox_center_x + xy_centered[:, 0]
+    pts[:, 1] = bbox_center_y - xy_centered[:, 1]  # flip Y for image coords
+
     return pts
 
 
@@ -181,8 +241,8 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
         ts = frame_data.get("timestamp_ms", frame_idx * 33.33)
         hands = frame_data.get("hands", [])
         
-        rr.set_time_seconds("time", ts / 1000.0)
-        rr.set_time_sequence("frame", frame_idx)
+        rr.set_time("time", timestamp=ts / 1000.0)
+        rr.set_time("frame", sequence=frame_idx)
         
         # Get video frame
         frame_rgb = None
@@ -204,7 +264,7 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
             
             # 2D overlay
             if frame_rgb is not None:
-                pts_2d = get_joints_2d(hand)
+                pts_2d = get_joints_2d(hand, img_w, img_h)
                 draw_hand_2d(frame_rgb, pts_2d, side)
         
         if frame_rgb is not None:
@@ -241,33 +301,36 @@ def visualize_comparison(results_a: dict, results_b: dict, video_path: str = Non
     
     cap = None
     fps = 30
+    img_w, img_h = 1920, 1080  # default resolution
     if video_path and Path(video_path).exists():
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
-    
+        img_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        img_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
     for ts in all_ts:
-        rr.set_time_seconds("time", ts / 1000.0)
-        
+        rr.set_time("time", timestamp=ts / 1000.0)
+
         if cap:
             frame_idx = int(ts / 1000.0 * fps)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = cap.read()
             if ret:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
+
                 # A
                 fa = frame_rgb.copy()
                 if ts in frames_a:
                     for h in frames_a[ts].get("hands", []):
-                        pts = get_joints_2d(h)
+                        pts = get_joints_2d(h, img_w, img_h)
                         draw_hand_2d(fa, pts, h["side"])
                 rr.log(f"video/{label_a}/frame", rr.Image(fa))
-                
+
                 # B
                 fb = frame_rgb.copy()
                 if ts in frames_b:
                     for h in frames_b[ts].get("hands", []):
-                        pts = get_joints_2d(h)
+                        pts = get_joints_2d(h, img_w, img_h)
                         draw_hand_2d(fb, pts, h["side"])
                 rr.log(f"video/{label_b}/frame", rr.Image(fb))
     

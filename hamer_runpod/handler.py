@@ -129,28 +129,31 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
     
     bboxes = []
     is_right = []
-    
+    vitpose_keypoints = []  # Store ViTPose 2D keypoints
+
     for vitposes in vitposes_out:
         left_hand_keyp = vitposes['keypoints'][-42:-21]
         right_hand_keyp = vitposes['keypoints'][-21:]
-        
+
         # Left hand
         keyp = left_hand_keyp
         valid = keyp[:, 2] > 0.5
         if sum(valid) > 3:
-            bbox = [keyp[valid, 0].min(), keyp[valid, 1].min(), 
+            bbox = [keyp[valid, 0].min(), keyp[valid, 1].min(),
                     keyp[valid, 0].max(), keyp[valid, 1].max()]
             bboxes.append(bbox)
             is_right.append(0)
-        
+            vitpose_keypoints.append(keyp[:, :2])  # Store XY coordinates (21x2)
+
         # Right hand
         keyp = right_hand_keyp
         valid = keyp[:, 2] > 0.5
         if sum(valid) > 3:
-            bbox = [keyp[valid, 0].min(), keyp[valid, 1].min(), 
+            bbox = [keyp[valid, 0].min(), keyp[valid, 1].min(),
                     keyp[valid, 0].max(), keyp[valid, 1].max()]
             bboxes.append(bbox)
             is_right.append(1)
+            vitpose_keypoints.append(keyp[:, :2])  # Store XY coordinates (21x2)
     
     if len(bboxes) == 0:
         return result
@@ -186,38 +189,21 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
             
             # Compute camera translation in full image space
             pred_cam_t_full = cam_crop_to_full(
-                pred_cam.unsqueeze(0), 
-                box_center.unsqueeze(0), 
-                box_size.unsqueeze(0), 
-                img_size.unsqueeze(0), 
+                pred_cam.unsqueeze(0),
+                box_center.unsqueeze(0),
+                box_size.unsqueeze(0),
+                img_size.unsqueeze(0),
                 scaled_focal_length
             )
-            
-            # === Project 3D joints to 2D image coordinates ===
-            # Build camera intrinsics
-            focal_length = torch.tensor([[scaled_focal_length, scaled_focal_length]], device=DEVICE)
-            camera_center = img_size.flip(0).unsqueeze(0) / 2  # [cx, cy]
-            
-            # Project: joints_3d + camera_t -> 2D
-            joints_world = pred_keypoints_3d.unsqueeze(0) + pred_cam_t_full.unsqueeze(1)
-            
-            # Perspective projection: project to image plane
-            # z = depth, project x,y using focal length
-            z = joints_world[:, :, 2:3]  # [1, 21, 1]
-            xy = joints_world[:, :, :2]   # [1, 21, 2]
-            
-            # Apply projection: x_2d = fx * x / z + cx
-            joints_2d = xy / z * focal_length.unsqueeze(1) + camera_center.unsqueeze(1)
-            joints_2d = joints_2d[0].detach().cpu().numpy()  # [21, 2]
-            
+
             pred_cam_t = pred_cam_t_full.detach().cpu().numpy()[0]
-            
+
             result["hands"].append({
                 "side": side,
                 "joints_3d": pred_keypoints_3d.detach().cpu().numpy().tolist(),  # 21 joints × 3 coords
-                "joints_2d": joints_2d.tolist(),  # 21 joints × 2 coords (pixel positions!)
                 "camera_t": pred_cam_t.tolist(),
-                "bbox": boxes[n].tolist()
+                "bbox": boxes[n].tolist(),
+                "vitpose_2d": vitpose_keypoints[n].tolist()  # ViTPose 2D keypoints (21x2) in pixel coords
             })
     
     return result
