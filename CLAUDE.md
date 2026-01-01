@@ -62,12 +62,23 @@ cd hamer_runpod
 ./build.sh push      # Push to Docker Hub
 
 # Process video via RunPod
+# ⚠️ CRITICAL: ALWAYS use --fps matching source video FPS (usually 30) to process ALL frames
+# Lower FPS will result in dropped frames and incomplete tracking data
 cd hamer_runpod
 python hamer_client.py /path/to/video.mp4 --fps 30
 
 # Visualize HaMeR output
 python hamer_visualizer.py video_hamer.json --video /path/to/video.mp4
 ```
+
+### ⚠️ CRITICAL RULE: Always Process All Frames
+
+**For customer deliverables, we MUST process every frame:**
+- Use `--fps 30` (or match source video FPS) for complete tracking
+- Lower FPS (e.g., `--fps 10`) samples frames and creates gaps in tracking
+- Customers expect continuous frame-by-frame hand pose data
+- Cost difference is minimal (~3x) but quality difference is significant
+- **Default FPS:** Always use 30 FPS unless source video has different FPS
 
 ## Critical Technical Details
 
