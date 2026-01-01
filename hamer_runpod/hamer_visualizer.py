@@ -1,6 +1,11 @@
 """
-HaMeR Rerun Visualizer v3 - Matching MediaPipe Style
-Proper 3D visualization + 2D video overlay like the MediaPipe visualizer.
+HaMeR Rerun Visualizer v4 - Apple EgoDex Style
+3D visualization + 2D video overlay with Apple EgoDex inspired minimal aesthetic.
+
+Features:
+- Softer colors: light blue (left), soft orange (right)
+- Minimal rendering: smaller dots, thinner lines
+- Clean, professional look matching Apple research standards
 
 Usage:
     python hamer_visualizer.py 04_hamer_30fps.json --video videos/04.mp4
@@ -32,11 +37,39 @@ SKELETON_CONNECTIONS = [
     (5, 9), (9, 13), (13, 17)  # Palm
 ]
 
-# Apple EgoDex style colors
-DOT_COLOR = [100, 255, 100]  # Lime green
-LINE_COLOR = [50, 150, 255]  # Blue
-LEFT_COLOR = [50, 150, 255]   # Blue for left
-RIGHT_COLOR = [255, 100, 50]  # Orange for right
+# Apple EgoDex style: gradient from lime green to yellow for joints
+# Each joint gets a different color based on depth/position
+def get_joint_colors_apple_style(joints_3d: np.ndarray, side: str) -> list:
+    """
+    Generate Apple EgoDex style gradient colors for joints.
+    Returns list of RGB colors, one per joint.
+    Gradient from lime green [100, 255, 100] to yellow [255, 255, 100]
+    """
+    # Use Z-depth for color gradient (closer = greener, farther = yellower)
+    z_values = joints_3d[:, 2]
+    z_min, z_max = z_values.min(), z_values.max()
+
+    colors = []
+    for z in z_values:
+        # Normalize Z to 0-1 range
+        if z_max != z_min:
+            t = (z - z_min) / (z_max - z_min)
+        else:
+            t = 0.5
+
+        # Gradient from lime green to yellow
+        # Lime green [100, 255, 100] -> Yellow [255, 255, 100]
+        r = int(100 + t * 155)  # 100 -> 255
+        g = 255                  # constant
+        b = 100                  # constant
+
+        colors.append([r, g, b])
+
+    return colors
+
+# Line colors: blue for skeleton (Apple style)
+SKELETON_LINE_COLOR_LEFT = [50, 150, 255]   # Blue for left hand skeleton
+SKELETON_LINE_COLOR_RIGHT = [255, 120, 50]  # Orange for right hand skeleton
 
 
 def load_results(json_path: str) -> dict:
@@ -91,23 +124,25 @@ def transform_joints_for_3d(hand: dict, img_width: int, img_height: int, side: s
     return result
 
 
-def log_hand_3d(hand_key: str, positions: np.ndarray, side: str):
-    """Log 3D hand skeleton in Apple EgoDex style."""
-    color = LEFT_COLOR if side == "left" else RIGHT_COLOR
-    
-    # Tiny dots
-    radii = [0.008 if JOINT_NAMES[i].endswith("TIP") else 0.006 for i in range(21)]
+def log_hand_3d(hand_key: str, positions: np.ndarray, side: str, joints_3d_original: np.ndarray):
+    """Log 3D hand skeleton in Apple EgoDex style with gradient joint colors."""
+    # Get Apple-style gradient colors for joints (lime green -> yellow)
+    joint_colors = get_joint_colors_apple_style(joints_3d_original, side)
+
+    # Apple EgoDex style: smaller, more minimal dots with gradient colors
+    radii = [0.006 if JOINT_NAMES[i].endswith("TIP") else 0.004 for i in range(21)]
     rr.log(
         f"world/{hand_key}/joints",
-        rr.Points3D(positions, colors=[color] * 21, radii=radii)
+        rr.Points3D(positions, colors=joint_colors, radii=radii)
     )
-    
-    # Thin lines
+
+    # Apple EgoDex style: blue skeleton lines (not gradient)
+    skeleton_color = SKELETON_LINE_COLOR_LEFT if side == "left" else SKELETON_LINE_COLOR_RIGHT
     segments = [[positions[s], positions[e]] for s, e in SKELETON_CONNECTIONS
                 if s < len(positions) and e < len(positions)]
     rr.log(
         f"world/{hand_key}/skeleton",
-        rr.LineStrips3D(segments, colors=[color], radii=0.004)
+        rr.LineStrips3D(segments, colors=[skeleton_color], radii=0.003)
     )
 
 
@@ -203,17 +238,26 @@ def get_joints_2d(hand: dict, img_width: int = 1920, img_height: int = 1080) -> 
     return pts
 
 
-def draw_hand_2d(frame: np.ndarray, pts: np.ndarray, side: str):
-    """Draw hand skeleton on frame."""
-    color = tuple(LEFT_COLOR if side == "left" else RIGHT_COLOR)
-    
+def draw_hand_2d(frame: np.ndarray, pts: np.ndarray, side: str, joints_3d: np.ndarray):
+    """Draw hand skeleton on frame with Apple EgoDex styling and gradient colors."""
+    # Get Apple-style gradient colors for joints
+    joint_colors_rgb = get_joint_colors_apple_style(joints_3d, side)
+
+    # Skeleton line color (blue/orange based on side)
+    skeleton_line_color = SKELETON_LINE_COLOR_LEFT if side == "left" else SKELETON_LINE_COLOR_RIGHT
+    line_color_bgr = tuple(reversed(skeleton_line_color))  # RGB -> BGR
+
+    # Apple EgoDex style: thinner lines for minimal aesthetic
     for i, j in SKELETON_CONNECTIONS:
         if i < len(pts) and j < len(pts):
-            cv2.line(frame, tuple(pts[i].astype(int)), tuple(pts[j].astype(int)), color, 2, cv2.LINE_AA)
-    
+            cv2.line(frame, tuple(pts[i].astype(int)), tuple(pts[j].astype(int)), line_color_bgr, 1, cv2.LINE_AA)
+
+    # Apple EgoDex style: gradient colored dots (lime green -> yellow)
     for i, pt in enumerate(pts):
-        r = 5 if JOINT_NAMES[i].endswith("TIP") else 4
-        cv2.circle(frame, tuple(pt.astype(int)), r, color, -1, cv2.LINE_AA)
+        r = 4 if JOINT_NAMES[i].endswith("TIP") else 3
+        # Convert RGB to BGR for OpenCV
+        color_bgr = tuple(reversed(joint_colors_rgb[i]))
+        cv2.circle(frame, tuple(pt.astype(int)), r, color_bgr, -1, cv2.LINE_AA)
 
 
 def visualize(results: dict, video_path: str = None, save_path: str = None):
@@ -271,14 +315,14 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
             joints_3d = np.array(hand["joints_3d"])
             bbox = hand["bbox"]
 
-            # 3D visualization
+            # 3D visualization with Apple-style gradient colors
             pos_3d = transform_joints_for_3d(hand, img_w, img_h, side)
-            log_hand_3d(side, pos_3d, side)
-            
+            log_hand_3d(side, pos_3d, side, joints_3d)  # Pass original joints_3d for color gradient
+
             # 2D overlay
             if frame_rgb is not None:
                 pts_2d = get_joints_2d(hand, img_w, img_h)
-                draw_hand_2d(frame_rgb, pts_2d, side)
+                draw_hand_2d(frame_rgb, pts_2d, side, joints_3d)  # Pass joints_3d for gradient colors
         
         if frame_rgb is not None:
             rr.log("video/frame", rr.Image(frame_rgb))

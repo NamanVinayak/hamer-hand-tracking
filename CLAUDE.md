@@ -71,6 +71,19 @@ python hamer_client.py /path/to/video.mp4 --fps 30
 python hamer_visualizer.py video_hamer.json --video /path/to/video.mp4
 ```
 
+### Visualization Styling
+
+**Apple EgoDex Inspired Design:**
+- Clean, minimal aesthetic matching Apple's research visualization standards
+- Color scheme:
+  - Left hand: Light blue `[80, 200, 255]` (Apple-style blue)
+  - Right hand: Soft orange `[255, 180, 80]` (Apple-style warm)
+- Rendering parameters optimized for clarity:
+  - 3D: Smaller joints (TIP=0.006, other=0.004), thinner lines (0.003)
+  - 2D: Minimal dots (TIP=4px, other=3px), thin lines (1px)
+- Softer, less saturated colors for professional appearance
+- Maintains clear left/right distinction with Apple's minimal aesthetic
+
 ### ⚠️ CRITICAL RULE: Always Process All Frames
 
 **For customer deliverables, we MUST process every frame:**
