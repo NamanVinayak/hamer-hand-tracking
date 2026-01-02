@@ -238,6 +238,36 @@ def get_joints_2d(hand: dict, img_width: int = 1920, img_height: int = 1080) -> 
     return pts
 
 
+def draw_arm_2d(frame: np.ndarray, arm_keypoints: dict, side: str):
+    """Draw arm skeleton on frame: shoulder → elbow → wrist in Apple EgoDex style."""
+    # Use Apple-style colors: blue for left, orange for right
+    color = SKELETON_LINE_COLOR_LEFT if side == "left" else SKELETON_LINE_COLOR_RIGHT
+    color_bgr = tuple(reversed(color))
+
+    # Extract keypoints (each is [x, y, confidence])
+    shoulder = np.array(arm_keypoints["shoulder"][:2])  # Just x, y
+    elbow = np.array(arm_keypoints["elbow"][:2])
+    wrist = np.array(arm_keypoints["wrist"][:2])
+
+    # Check confidence (index 2) before drawing
+    shoulder_conf = arm_keypoints["shoulder"][2]
+    elbow_conf = arm_keypoints["elbow"][2]
+    wrist_conf = arm_keypoints["wrist"][2]
+
+    # Draw skeleton lines (thin, 1px like hands) - only if confidence > 0.5
+    if shoulder_conf > 0.5 and elbow_conf > 0.5:
+        cv2.line(frame, tuple(shoulder.astype(int)), tuple(elbow.astype(int)), color_bgr, 1, cv2.LINE_AA)
+    if elbow_conf > 0.5 and wrist_conf > 0.5:
+        cv2.line(frame, tuple(elbow.astype(int)), tuple(wrist.astype(int)), color_bgr, 1, cv2.LINE_AA)
+
+    # Draw joint dots (3px for arms, slightly smaller than hand tips)
+    if shoulder_conf > 0.5:
+        cv2.circle(frame, tuple(shoulder.astype(int)), 3, color_bgr, -1, cv2.LINE_AA)
+    if elbow_conf > 0.5:
+        cv2.circle(frame, tuple(elbow.astype(int)), 3, color_bgr, -1, cv2.LINE_AA)
+    # Note: wrist is drawn by hand skeleton, so we skip it here
+
+
 def draw_hand_2d(frame: np.ndarray, pts: np.ndarray, side: str, joints_3d: np.ndarray):
     """Draw hand skeleton on frame with Apple EgoDex styling and gradient colors."""
     # Get Apple-style gradient colors for joints
@@ -321,6 +351,11 @@ def visualize(results: dict, video_path: str = None, save_path: str = None):
 
             # 2D overlay
             if frame_rgb is not None:
+                # Draw arm skeleton first (so hand overlays on top)
+                if "arm_keypoints_2d" in hand:
+                    draw_arm_2d(frame_rgb, hand["arm_keypoints_2d"], side)
+
+                # Then draw hand skeleton
                 pts_2d = get_joints_2d(hand, img_w, img_h)
                 draw_hand_2d(frame_rgb, pts_2d, side, joints_3d)  # Pass joints_3d for gradient colors
         

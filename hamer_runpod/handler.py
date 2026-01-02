@@ -130,10 +130,21 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
     bboxes = []
     is_right = []
     vitpose_keypoints = []  # Store ViTPose 2D keypoints
+    arm_keypoints = []  # Store arm keypoints (shoulder, elbow, wrist)
 
     for vitposes in vitposes_out:
-        left_hand_keyp = vitposes['keypoints'][-42:-21]
-        right_hand_keyp = vitposes['keypoints'][-21:]
+        all_keypoints = vitposes['keypoints']  # All 133 COCO WholeBody keypoints
+        left_hand_keyp = all_keypoints[-42:-21]
+        right_hand_keyp = all_keypoints[-21:]
+
+        # Extract arm keypoints (COCO WholeBody format):
+        # Indices: 5=left_shoulder, 6=right_shoulder, 7=left_elbow, 8=right_elbow, 9=left_wrist, 10=right_wrist
+        left_shoulder = all_keypoints[5]   # [x, y, confidence]
+        right_shoulder = all_keypoints[6]
+        left_elbow = all_keypoints[7]
+        right_elbow = all_keypoints[8]
+        left_wrist = all_keypoints[9]
+        right_wrist = all_keypoints[10]
 
         # Left hand
         keyp = left_hand_keyp
@@ -144,6 +155,12 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
             bboxes.append(bbox)
             is_right.append(0)
             vitpose_keypoints.append(keyp[:, :2])  # Store XY coordinates (21x2)
+            # Store left arm keypoints (shoulder, elbow, wrist) - each is [x, y, conf]
+            arm_keypoints.append({
+                "shoulder": left_shoulder.tolist(),
+                "elbow": left_elbow.tolist(),
+                "wrist": left_wrist.tolist()
+            })
 
         # Right hand
         keyp = right_hand_keyp
@@ -154,6 +171,12 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
             bboxes.append(bbox)
             is_right.append(1)
             vitpose_keypoints.append(keyp[:, :2])  # Store XY coordinates (21x2)
+            # Store right arm keypoints (shoulder, elbow, wrist) - each is [x, y, conf]
+            arm_keypoints.append({
+                "shoulder": right_shoulder.tolist(),
+                "elbow": right_elbow.tolist(),
+                "wrist": right_wrist.tolist()
+            })
     
     if len(bboxes) == 0:
         return result
@@ -203,7 +226,8 @@ def process_frame(img_cv2: np.ndarray, frame_idx: int) -> dict:
                 "joints_3d": pred_keypoints_3d.detach().cpu().numpy().tolist(),  # 21 joints × 3 coords
                 "camera_t": pred_cam_t.tolist(),
                 "bbox": boxes[n].tolist(),
-                "vitpose_2d": vitpose_keypoints[n].tolist()  # ViTPose 2D keypoints (21x2) in pixel coords
+                "vitpose_2d": vitpose_keypoints[n].tolist(),  # ViTPose 2D keypoints (21x2) in pixel coords
+                "arm_keypoints_2d": arm_keypoints[n]  # Arm keypoints: shoulder, elbow, wrist (each [x, y, conf])
             })
     
     return result
