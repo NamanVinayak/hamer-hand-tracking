@@ -5,16 +5,24 @@
 ![Docker](https://img.shields.io/badge/docker-supported-2496ED)
 ![RunPod](https://img.shields.io/badge/RunPod-serverless-8A2BE2)
 
-🖐️ HaMeR-based hand tracking pipeline with RunPod serverless GPU integration.
+🖐️ Egocentric hand tracking pipeline for robotics data collection — powered by HaMeR and RunPod serverless GPUs.
 
 ## Overview
-This repository contains a robust pipeline for hand tracking and pose estimation using the HaMeR (Hand Mesh Recovery) model. It is designed to process videos and extract high-fidelity 3D hand poses, with support for offloading heavy computation to serverless GPUs via RunPod.
+This pipeline processes **egocentric (first-person perspective) video** to extract high-fidelity 3D hand mesh data using the HaMeR (Hand Mesh Recovery) model. It is designed for robotics teams collecting human demonstration data for training dexterous manipulation policies — the kind of data needed for learning-from-demonstration workflows (e.g. ALOHA, OpenVLA, ACT).
+
+Heavy inference is offloaded to RunPod serverless GPUs, so you don't need on-premise GPU hardware to run it.
+
+## Use Cases
+- **Robot Learning from Demonstration (LfD)** — Capture hand poses from human operators to build manipulation training datasets
+- **Teleoperation Data Collection** — Extract structured hand mesh data from egocentric video recordings
+- **Dexterous Manipulation Research** — Generate 3D hand pose annotations at scale without a GPU cluster
 
 ## Features
-- **HaMeR Integration**: State-of-the-art hand mesh recovery.
-- **Serverless Processing**: Built-in scripts to deploy and execute inference on RunPod.
-- **Video Processing**: End-to-end processing of video inputs to extracted pose data.
-- **Visualization**: Tools (like Rerun visualizer) to inspect the 3D hand tracking results out-of-the-box.
+- **Egocentric Video Support**: Optimized for first-person camera perspectives used in robotics data collection.
+- **HaMeR Integration**: State-of-the-art 3D hand mesh recovery.
+- **Serverless Processing**: Offload inference to RunPod — no local GPU required.
+- **End-to-End Pipeline**: Video input → 3D pose extraction → structured output ready for downstream training.
+- **Visualization**: Rerun-based visualizer to inspect hand tracking results out-of-the-box.
 - **Docker Support**: Containerized environment for reproducible execution.
 
 ## Setup & Installation
