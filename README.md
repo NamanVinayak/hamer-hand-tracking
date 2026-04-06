@@ -1,5 +1,10 @@
 # HaMeR Hand Tracking Pipeline
 
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Docker](https://img.shields.io/badge/docker-supported-2496ED)
+![RunPod](https://img.shields.io/badge/RunPod-serverless-8A2BE2)
+
 🖐️ HaMeR-based hand tracking pipeline with RunPod serverless GPU integration.
 
 ## Overview
